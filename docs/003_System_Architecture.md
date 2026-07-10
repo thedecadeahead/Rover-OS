@@ -3,604 +3,533 @@
 **Project:** ARGO Rover OS  
 **Version:** 0.1 Alpha  
 **Status:** Draft  
-**Initial Runtime Target:** Raspberry Pi 5  
+**Primary Vehicle Target:** 2014 Toyota Prius  
+**Initial Compute Target:** Raspberry Pi 5  
 
 ---
 
 ## 1. Purpose
 
-This document defines the high-level system architecture for ARGO Rover OS. It explains how the frontend, backend services, hardware interfaces, vehicle adapters, and ARGO integrations should be organized.
+This document defines the initial system architecture for ARGO Rover OS. It explains how the frontend, backend services, hardware interfaces, vehicle adapters, and ARGO integrations should be separated so the project can start on a Raspberry Pi but remain portable to more powerful hardware later.
 
-The architecture must support a working Raspberry Pi implementation while avoiding long-term dependence on Raspberry Pi-specific assumptions.
+Rover OS should be designed as a modular vehicle computing platform, not a single monolithic carputer script.
 
 ---
 
-## 2. Architectural Principles
+## 2. Architectural Goals
 
-### 2.1 Hardware Agnostic
+The architecture must support the following goals:
 
-The system must be able to move from Raspberry Pi 5 to another Linux-capable machine with minimal changes.
-
-Hardware-specific concerns should be isolated in adapters, drivers, services, or configuration files.
-
-### 2.2 Vehicle Agnostic
-
-Prius-specific integration must not be baked into the core application.
-
-The system should use a vehicle adapter layer.
-
-Example adapters:
-
-- Generic OBD-II adapter.
-- Toyota Prius Gen 3 adapter.
-- Future Honda Element adapter.
-- Mock vehicle adapter.
-
-### 2.3 Service Oriented
-
-Major functions should be separate services or modules.
-
-Examples:
-
-- Vehicle service.
-- Diagnostics service.
-- Camera service.
-- Audio service.
-- Navigation service.
-- Settings service.
-- ARGO service.
-- Update service.
-
-### 2.4 Local First
-
-Local functionality must not depend on ARGO Core, internet, cloud services, or remote APIs.
-
-### 2.5 Mockable
-
-Every hardware-facing service should have a mock mode.
-
-Mock mode enables:
-
-- Desktop development.
-- Automated testing.
-- UI development before hardware purchase.
-- Claude-assisted implementation without physical devices.
+- Run on Raspberry Pi 5 for the first vehicle prototype.
+- Run on a normal laptop for development with mock hardware.
+- Allow migration to a mini PC or other edge computer later.
+- Keep vehicle-specific code isolated from the core application.
+- Keep hardware drivers isolated behind stable service APIs.
+- Allow the UI to continue running if one hardware service fails.
+- Support offline-first operation.
+- Support optional ARGO Core and Home Assistant integration.
+- Provide a safe, reliable boot and shutdown path for vehicle use.
 
 ---
 
 ## 3. High-Level Architecture
 
+Rover OS is composed of five major layers:
+
+1. User Interface Layer
+2. Application Service Layer
+3. Hardware Abstraction Layer
+4. Vehicle Adapter Layer
+5. Platform / Operating System Layer
+
 ```text
-+-------------------------------------------------------------+
-|                         Rover UI                            |
-|              React + TypeScript + Kiosk Browser             |
-+-----------------------------+-------------------------------+
-                              |
-                              | HTTP / WebSocket
-                              |
-+-----------------------------v-------------------------------+
-|                       Rover Backend                         |
-|             Node.js Services + Local API Gateway             |
-+-----+-----------+----------+----------+----------+----------+
-      |           |          |          |          |
-      |           |          |          |          |
-      v           v          v          v          v
- Vehicle      Camera      Audio     Settings     ARGO
- Service      Service     Service    Service     Service
-      |
-      v
- Hardware Abstraction Layer
-      |
-      v
- Vehicle Adapter / OBD-II / CAN / Microcontroller
++--------------------------------------------------+
+|                 User Interface                   |
+|        React / TypeScript / Kiosk Browser        |
++--------------------------------------------------+
+|              Application Services                |
+|   API, WebSocket, Settings, Media, Diagnostics   |
++--------------------------------------------------+
+|             Hardware Abstraction Layer           |
+|     OBD, Camera, Audio, GPS, Power, Input        |
++--------------------------------------------------+
+|               Vehicle Adapter Layer              |
+|       Toyota Prius Gen 3 / Generic OBD-II        |
++--------------------------------------------------+
+|                Platform Layer                    |
+|       Linux, systemd, Chromium, Storage          |
++--------------------------------------------------+
 ```
 
 ---
 
-## 4. Runtime Layers
+## 4. User Interface Layer
 
-### 4.1 Operating System Layer
+### 4.1 Technology
 
-The host operating system should be Linux.
+The UI should be built with:
 
-Initial target:
+- React
+- TypeScript
+- Vite
+- CSS modules, Tailwind, or another maintainable styling system
+- WebSocket client for live updates
+- REST client for request/response operations
 
-- Raspberry Pi OS or another stable Pi-compatible Linux distribution.
+The UI should run in Chromium kiosk mode on the in-car system.
 
-Future targets:
+### 4.2 UI Responsibilities
 
-- Debian.
-- Ubuntu Server.
-- Fedora IoT.
-- NixOS.
-- Other Linux distributions suitable for embedded or appliance-like operation.
+The UI is responsible for:
 
-The OS layer is responsible for:
-
-- Device drivers.
-- Networking.
-- Bluetooth.
-- USB device access.
-- Display output.
-- Audio stack.
-- Service supervision.
-- Filesystem mounting.
-- Time synchronization.
-
-### 4.2 Application Runtime Layer
-
-The application runtime should include:
-
-- Node.js backend runtime.
-- Browser-based frontend runtime.
-- Local database.
-- System service manager.
-
-Recommended early implementation:
-
-- Node.js with TypeScript.
-- React with TypeScript.
-- Vite for frontend development.
-- SQLite for local persistence.
-- WebSocket for live telemetry.
-
-### 4.3 Presentation Layer
-
-The presentation layer is the Rover UI.
-
-It should run in Chromium kiosk mode for early versions.
-
-The UI should not expose the user to browser controls.
-
-Responsibilities:
-
-- Dashboard.
+- Dashboard rendering.
 - Navigation screen.
-- Media screen.
-- Cameras screen.
-- Diagnostics screen.
-- Maintenance screen.
-- Home Assistant screen.
-- Projects screen.
-- Settings screen.
+- Media controls.
+- Camera views.
+- Diagnostics display.
+- Maintenance display.
+- Settings interface.
+- ARGO status display.
+- Home Assistant panel.
+- Error and degraded-state messaging.
 
-### 4.4 API Layer
+### 4.3 UI Non-Responsibilities
 
-The API layer is the boundary between frontend and backend.
+The UI must not directly:
 
-It should expose:
+- Read OBD-II devices.
+- Access CAN hardware.
+- Manage GPIO.
+- Control shutdown.
+- Talk directly to vehicle wiring.
+- Store secrets in frontend code.
 
-- REST endpoints for request/response operations.
-- WebSocket channels for live telemetry and events.
-
-Examples:
-
-- `GET /api/system/status`
-- `GET /api/vehicle/status`
-- `GET /api/settings`
-- `POST /api/settings`
-- `GET /api/cameras`
-- `POST /api/media/play`
-- `WS /api/events`
-
-### 4.5 Service Layer
-
-The service layer contains backend modules for each major function.
-
-Services should be independently testable.
-
-Services should communicate through clear interfaces rather than importing hardware-specific logic directly.
-
-### 4.6 Hardware Abstraction Layer
-
-The hardware abstraction layer provides normalized interfaces for physical devices.
-
-It should hide implementation details from the rest of the system.
-
-Examples:
-
-- A camera source may be USB capture, CSI camera, RTSP stream, or mock feed.
-- Vehicle speed may come from OBD-II, CAN, GPS, or mock data.
-- Steering wheel buttons may come from CAN, USB keyboard events, serial messages, or mock events.
-
-### 4.7 Vehicle Adapter Layer
-
-The vehicle adapter layer translates vehicle-specific data into Rover-standard data structures.
-
-For the Prius, this may include:
-
-- OBD-II PIDs.
-- Toyota-specific hybrid data if available.
-- Reverse state.
-- Ignition state.
-- Steering wheel control mapping.
-- Illumination/dimmer state.
+All hardware access must pass through backend services.
 
 ---
 
-## 5. Core Services
+## 5. Application Service Layer
 
-### 5.1 System Service
+The application service layer is the main backend for Rover OS.
 
-Responsible for:
+Recommended initial runtime:
 
-- System health.
-- Uptime.
-- CPU temperature.
-- Storage status.
-- Memory status.
-- Service status.
-- Shutdown and restart commands.
+- Node.js
+- TypeScript
+- Express or Fastify for HTTP APIs
+- WebSocket server for live events
+- SQLite for local persistence
 
-### 5.2 Vehicle Service
+### 5.1 Core Services
 
-Responsible for:
+Initial services should include:
 
-- Vehicle state.
-- OBD-II connection.
-- Telemetry normalization.
-- Trip state.
-- Adapter selection.
+- `dashboard-service`
+- `settings-service`
+- `vehicle-service`
+- `diagnostics-service`
+- `camera-service`
+- `media-service`
+- `network-service`
+- `argo-service`
+- `logging-service`
+- `power-service`
 
-Standard vehicle state should include:
+These may begin as modules inside a single backend process, but the code should be organized so they can be separated later.
 
-```json
-{
-  "connected": true,
-  "speedMph": 0,
-  "gear": "park",
-  "fuelPercent": null,
-  "rangeMiles": null,
-  "rpm": null,
-  "coolantTempF": null,
-  "battery12v": null,
-  "odometerMiles": null
-}
-```
+### 5.2 API Gateway
 
-### 5.3 Diagnostics Service
+The backend should expose one local API surface to the frontend.
 
-Responsible for:
+Default bind behavior:
 
+- Bind to `localhost` during early development.
+- Avoid exposing remote APIs unless explicitly configured.
+
+API types:
+
+- REST for commands and configuration.
+- WebSocket for live telemetry and status.
+
+---
+
+## 6. Hardware Abstraction Layer
+
+The hardware abstraction layer hides implementation details of physical devices.
+
+It should expose stable interfaces such as:
+
+- `getVehicleSnapshot()`
+- `subscribeToTelemetry()`
+- `getCameraStream(cameraId)`
+- `setAudioVolume(level)`
+- `getPowerState()`
+- `requestShutdown()`
+
+The application should not care whether data comes from real OBD-II hardware, a mock service, or a future CAN adapter.
+
+---
+
+## 7. Vehicle Adapter Layer
+
+The vehicle adapter layer translates generic Rover concepts into vehicle-specific behavior.
+
+Initial adapters:
+
+- `generic-obd2`
+- `toyota-prius-gen3`
+- `mock-vehicle`
+
+### 7.1 Generic OBD-II Adapter
+
+The generic adapter should support standard OBD-II PIDs where available.
+
+Examples:
+
+- Vehicle speed.
+- RPM where available.
+- Coolant temperature.
 - Diagnostic trouble codes.
-- Fault status.
-- Readiness monitors where available.
-- Diagnostic history.
-- Human-readable explanations.
+- Battery voltage if supported by the adapter.
 
-### 5.4 Camera Service
+### 7.2 Toyota Prius Gen 3 Adapter
 
-Responsible for:
+The Prius adapter should eventually support Gen 3 Prius-specific readings where safely available.
 
-- Camera enumeration.
-- Camera preview streams.
-- Reverse camera priority.
-- Recording support in later versions.
-- Camera health state.
+Potential future metrics:
 
-### 5.5 Audio Service
+- Hybrid battery state of charge.
+- Battery block voltages.
+- Inverter temperatures.
+- Engine run state.
+- Fuel economy data.
 
-Responsible for:
+All Prius-specific details must be documented before implementation.
 
-- Audio output state.
-- Volume control.
-- Source selection.
-- Media commands.
-- Bluetooth or local playback integration.
+### 7.3 Mock Vehicle Adapter
 
-### 5.6 Settings Service
+The mock adapter is required for development.
 
-Responsible for:
+It should generate believable sample data for:
 
-- Persistent configuration.
-- Theme.
-- Units.
-- Vehicle adapter selection.
-- Network references.
-- ARGO endpoint configuration.
-- Debug settings.
-
-### 5.7 ARGO Service
-
-Responsible for:
-
-- ARGO Core connectivity.
-- Sync status.
-- Optional remote commands.
-- Home Assistant references.
-- Event publishing.
-
-ARGO must be optional.
-
-### 5.8 Navigation Service
-
-Responsible for:
-
-- Navigation launch state.
-- Destination shortcuts.
-- Future map integration.
-- Cached location data where appropriate.
-
-Early versions may use external web mapping rather than implementing full navigation internally.
-
-### 5.9 Update Service
-
-Responsible for:
-
-- Version display.
-- Update availability.
-- Safe update workflow.
-- Rollback planning in future versions.
+- Speed.
+- Fuel level.
+- Gear.
+- Battery voltage.
+- Temperatures.
+- Alerts.
+- Connection state.
 
 ---
 
-## 6. Data Flow
+## 8. Data Flow
 
-### 6.1 Telemetry Flow
+### 8.1 Telemetry Flow
 
 ```text
-Vehicle Hardware
-      |
-      v
-OBD-II / CAN / Vehicle Controller
-      |
-      v
+Vehicle / Mock Source
+        ↓
 Vehicle Adapter
-      |
-      v
+        ↓
+Hardware Abstraction Layer
+        ↓
 Vehicle Service
-      |
-      +--> Local Database
-      |
-      +--> WebSocket Event Bus
-                  |
-                  v
-               Rover UI
+        ↓
+WebSocket Event Bus
+        ↓
+Frontend Dashboard
 ```
 
-### 6.2 Camera Flow
+### 8.2 Command Flow
 
 ```text
-Camera Hardware
-      |
-      v
-Capture Device / Stream Source
-      |
-      v
-Camera Service
-      |
-      v
-Rover UI Camera View
+Frontend Button / UI Action
+        ↓
+REST API
+        ↓
+Application Service
+        ↓
+Hardware Abstraction Layer
+        ↓
+Hardware / Adapter / Mock Handler
 ```
 
-### 6.3 Settings Flow
+### 8.3 Settings Flow
 
 ```text
-Rover UI
-   |
-   v
+Frontend Settings Screen
+        ↓
 Settings API
-   |
-   v
+        ↓
 Settings Service
-   |
-   v
-Local Database / Config File
-```
-
-### 6.4 ARGO Sync Flow
-
-```text
-Rover Services
-      |
-      v
-ARGO Service
-      |
-      v
-Network Layer
-      |
-      v
-ARGO Core / Vault / Home Assistant
+        ↓
+SQLite Database
+        ↓
+Service Reload / Event Broadcast
 ```
 
 ---
 
-## 7. Local Database
+## 9. Local Database
 
-The system should use a local database for structured state.
+The initial local database should be SQLite.
 
-Initial recommendation:
-
-- SQLite.
+SQLite is appropriate because Rover OS is a single-node embedded system during early development.
 
 Data categories:
 
-- Settings.
-- Trip logs.
-- Telemetry snapshots.
-- Diagnostic events.
+- System settings.
+- Vehicle configuration.
+- Trip summaries.
 - Maintenance records.
-- Camera metadata.
-- Sync queue.
+- Diagnostic history.
+- Event logs.
+- Integration configuration.
 
-The database should be designed so Rover can operate offline and sync later.
+The database should not store large dashcam video files directly. Video should be stored as files with metadata in the database.
 
 ---
 
-## 8. Event Bus
+## 10. Event Bus
 
-The backend should provide a WebSocket event bus for live updates.
+Rover OS should use a WebSocket-based live event bus for the frontend.
 
-Example event types:
+Event categories:
 
-- `system.status.updated`
-- `vehicle.telemetry.updated`
-- `vehicle.connection.changed`
-- `camera.reverse.enabled`
-- `camera.reverse.disabled`
-- `diagnostics.codes.updated`
-- `media.state.updated`
-- `argo.connection.changed`
-- `settings.updated`
+- `vehicle.telemetry`
+- `vehicle.alert`
+- `camera.status`
+- `network.status`
+- `argo.status`
+- `media.status`
+- `power.status`
+- `system.error`
 
-Events should use predictable JSON envelopes.
+Events should include:
+
+- Event type.
+- Timestamp.
+- Source service.
+- Payload.
 
 Example:
 
 ```json
 {
-  "type": "vehicle.telemetry.updated",
-  "timestamp": "2026-07-09T12:00:00Z",
+  "type": "vehicle.telemetry",
+  "timestamp": "2026-07-09T22:30:00-05:00",
+  "source": "vehicle-service",
   "payload": {
     "speedMph": 42,
-    "battery12v": 13.8
+    "fuelPercent": 68,
+    "batteryVoltage": 13.9,
+    "gear": "D"
   }
 }
 ```
 
 ---
 
-## 9. Vehicle I/O Controller Concept
+## 11. Platform Layer
 
-Rover OS should consider a small microcontroller as the boundary between the vehicle and main computer.
+The initial platform should be Linux.
 
-Possible controller hardware:
+Recommended early target:
 
-- RP2040.
-- ESP32.
-- STM32.
-- Arduino-compatible automotive board.
+- Raspberry Pi OS or Debian-based Linux.
+- systemd services.
+- Chromium kiosk mode.
+- Node.js runtime.
+- Local SQLite database.
 
-Responsibilities may include:
+### 11.1 Boot Behavior
 
-- Ignition state detection.
-- Reverse signal detection.
-- Steering wheel button interpretation.
-- Safe shutdown signal.
-- Wake signal.
-- Simple CAN message forwarding.
+The platform should boot into Rover OS automatically.
 
-The Raspberry Pi should not be responsible for every low-level timing-sensitive vehicle signal.
-
----
-
-## 10. Process Model
-
-Early versions may run as a small number of processes:
+Target sequence:
 
 ```text
-rover-backend
-rover-frontend-kiosk
-rover-watchdog
+Power applied
+    ↓
+Linux boot
+    ↓
+systemd starts backend
+    ↓
+systemd starts kiosk session
+    ↓
+Chromium opens Rover UI
+    ↓
+Dashboard displays latest available state
 ```
 
-Future versions may split services into separate processes if needed.
+### 11.2 Shutdown Behavior
 
-The architecture should not require microservices at the beginning. It should require clean module boundaries.
+The platform must support graceful shutdown.
+
+Potential shutdown triggers:
+
+- Ignition state from vehicle I/O controller.
+- Manual UI shutdown command.
+- Low voltage warning.
+- Maintenance/debug command.
 
 ---
 
-## 11. Failure Handling
+## 12. Vehicle I/O Controller
 
-The system must handle subsystem failure gracefully.
+A dedicated microcontroller is recommended for vehicle-facing electrical signals.
+
+Potential platforms:
+
+- RP2040
+- ESP32
+- STM32
+
+The microcontroller may handle:
+
+- Ignition state.
+- Reverse signal.
+- Illumination signal.
+- Button inputs.
+- Safe shutdown signal.
+- Watchdog behavior.
+
+The main computer should communicate with the controller over USB serial or another simple protocol.
+
+This prevents the Linux host from being directly responsible for all real-time electrical behavior.
+
+---
+
+## 13. Camera Architecture
+
+Camera support should be modular.
+
+Initial camera types may include:
+
+- USB camera.
+- HDMI camera through USB capture.
+- Analog backup camera through USB capture.
+- IP camera stream.
+
+The camera service should expose camera availability and stream URLs to the frontend.
+
+The frontend should not directly discover hardware.
+
+---
+
+## 14. Audio Architecture
+
+Audio should be treated as a subsystem.
+
+Initial audio path options:
+
+- USB DAC to factory amplifier integration.
+- USB DAC to aftermarket amplifier.
+- HDMI audio for bench testing.
+
+The media service should not assume one specific output path.
+
+The production Prius install should attempt to retain the factory JBL amplifier if practical.
+
+---
+
+## 15. ARGO Integration Architecture
+
+ARGO integration must be optional.
+
+The `argo-service` should handle:
+
+- ARGO Core endpoint configuration.
+- Health checks.
+- Authentication.
+- Event sync.
+- Trip log upload.
+- Remote task hooks.
+
+If ARGO Core is unavailable, Rover OS must continue normal local operation.
+
+---
+
+## 16. Development Modes
+
+Rover OS should support at least three modes.
+
+### 16.1 Desktop Development Mode
+
+- Runs on laptop or desktop.
+- Uses mock hardware.
+- Hot reload enabled.
+- Developer logging enabled.
+
+### 16.2 Bench Mode
+
+- Runs on Raspberry Pi.
+- Uses real display and selected hardware.
+- Vehicle data may be mocked or from OBD-II.
+
+### 16.3 Vehicle Mode
+
+- Runs in the car.
+- Uses real power behavior.
+- Uses real hardware where installed.
+- Kiosk mode enabled.
+- Debug interfaces restricted.
+
+---
+
+## 17. Failure Handling
+
+Rover OS must assume hardware can fail or disconnect.
 
 Examples:
 
-- If OBD-II disconnects, show telemetry unavailable.
-- If ARGO Core is offline, local features continue.
-- If a camera fails, other cameras remain available.
-- If the database is temporarily locked, the UI should not crash.
-- If internet is unavailable, cached/local views remain functional.
+- OBD-II adapter missing.
+- Camera unavailable.
+- Network offline.
+- ARGO Core offline.
+- Audio device missing.
+- Vehicle adapter crash.
 
-The UI should communicate degraded state clearly without overwhelming the driver.
+The UI should show degraded status instead of crashing.
 
----
-
-## 12. Security Architecture
-
-Default security posture:
-
-- Local APIs bind to localhost.
-- Remote APIs disabled unless explicitly configured.
-- Secrets stored outside source code.
-- Debug routes disabled in driving mode.
-- Logs should avoid sensitive tokens.
-
-Future remote access should require authentication and should be designed deliberately.
+Services should report health through a common status interface.
 
 ---
 
-## 13. Development Architecture
+## 18. Security Boundaries
 
-The project should support three execution modes.
+Rover OS should default to local-only access.
 
-### 13.1 Desktop Development Mode
+Rules:
 
-- Runs on laptop or desktop.
-- Uses mock vehicle data.
-- Uses mock camera feeds.
-- Uses local browser.
-
-### 13.2 Bench Hardware Mode
-
-- Runs on Raspberry Pi.
-- Uses real touchscreen.
-- May use real OBD-II adapter.
-- May use test cameras.
-- Does not require vehicle installation.
-
-### 13.3 Vehicle Mode
-
-- Runs in the Prius.
-- Uses production configuration.
-- Uses vehicle power behavior.
-- Uses real camera and OBD-II sources.
+- Do not expose control APIs on the network by default.
+- Do not store secrets in frontend code.
+- Keep integration tokens in backend configuration.
+- Require explicit configuration for remote access.
+- Treat the car network as untrusted.
 
 ---
 
-## 14. Recommended Initial Tech Stack
+## 19. Initial Implementation Recommendation
 
-Frontend:
+The first implementation should be a monorepo with separate packages or directories:
 
-- React.
-- TypeScript.
-- Vite.
-- CSS modules or Tailwind.
-- WebSocket client.
+```text
+frontend/      React touchscreen UI
+backend/       Node.js services and APIs
+shared/        Shared TypeScript types
+firmware/      Future vehicle I/O controller firmware
+docs/          Architecture and project documentation
+hardware/      Hardware notes and wiring docs
+scripts/       Development and deployment scripts
+```
 
-Backend:
-
-- Node.js.
-- TypeScript.
-- Express or Fastify.
-- SQLite.
-- WebSocket server.
-- Zod or similar schema validation.
-
-System:
-
-- Linux.
-- systemd.
-- Chromium kiosk mode.
-- Git-based deployment.
-
-Testing:
-
-- Vitest for frontend/backend units.
-- Playwright for UI smoke tests where practical.
-- Mock hardware adapters.
+This keeps early development simple while still supporting future separation.
 
 ---
 
-## 15. Architecture Success Criteria
+## 20. Architectural Rule
 
-The architecture is successful when:
+No core Rover OS feature should require the physical Prius to be present during development.
 
-- The UI can run with mock data.
-- Hardware-specific code is isolated.
-- Prius-specific code is isolated.
-- The backend can be tested without the car.
-- The same UI can run on laptop, Pi, or mini PC.
-- The system can lose internet and continue working.
-- The system can lose ARGO Core and continue working.
-- The system can be extended without rewriting the foundation.
+Every vehicle-facing interface must have a mock implementation.
